@@ -103,6 +103,10 @@ services:
       # - KHOJ_OPERATOR_ENABLED=True
       # - KHOJ_TELEMETRY_DISABLE=True
 
+      # Authentication Configuration
+      # Set to True for anonymous mode (no authentication), False to enable email auth
+      - KHOJ_ANONYMOUS_MODE=${KHOJ_ANONYMOUS_MODE}
+
       # Timezone
       - TZ=${TZ}
     volumes:
@@ -119,4 +123,4 @@ services:
       retries: 3
       start_period: 30s
     restart: always
-    command: --host="0.0.0.0" --port=42110 -vv --non-interactive
+    command: --host="0.0.0.0" --port=42110 -vv --non-interactive ${KHOJ_EXTRA_ARGS}
