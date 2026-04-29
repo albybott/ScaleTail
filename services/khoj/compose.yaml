@@ -1,0 +1,126 @@
+configs:
+  ts-serve:
+    content: |
+      {"TCP":{"443":{"HTTPS":true}},
+      "Web":{"$${TS_CERT_DOMAIN}:443":
+          {"Handlers":{"/":
+          {"Proxy":"http://127.0.0.1:42110"}}}},
+      "AllowFunnel":{"$${TS_CERT_DOMAIN}:443":false}}
+
+services:
+  # Make sure you have updated/checked the .env file with the correct variables.
+  # All the ${ xx } need to be defined there.
+
+  # Tailscale Sidecar Configuration
+  tailscale:
+    image: tailscale/tailscale:latest # Image to be used
+    container_name: tailscale-${SERVICE} # Name for local container management
+    hostname: ${SERVICE} # Name used within your Tailscale environment
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve.json # Tailscale Serve configuration to expose the web interface on your local Tailnet - remove this line if not required
+      - TS_USERSPACE=false
+      - TS_ENABLE_HEALTH_CHECK=true # Enable healthcheck endpoint: "/healthz"
+      - TS_LOCAL_ADDR_PORT=127.0.0.1:41234 # The <addr>:<port> for the healthz endpoint
+      # - TS_ACCEPT_DNS=true # Uncomment when using MagicDNS
+      - TS_AUTH_ONCE=true
+    configs:
+      - source: ts-serve
+        target: /config/serve.json
+    volumes:
+      - ./config:/config # Config folder used to store Tailscale files
+      - ./ts/state:/var/lib/tailscale # Tailscale requirement
+    devices:
+      - /dev/net/tun:/dev/net/tun # Network configuration for Tailscale to work
+    cap_add:
+      - net_admin # Tailscale requirement
+      - sys_module # Required to load kernel modules for Tailscale
+    #ports:
+    #  - 0.0.0.0:${SERVICEPORT}:${SERVICEPORT} # Binding port ${SERVICE}PORT to the local network - may be removed if only exposure to your Tailnet is required
+    # If any DNS issues arise, use your preferred DNS DNS provider by uncommenting the config below
+    #dns:
+    #  - ${DNS_SERVER}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:41234/healthz"] # Check Tailscale has a Tailnet IP and is operational
+      interval: 1m # How often to perform the check
+      timeout: 10s # Time to wait for the check to succeed
+      retries: 3 # Number of retries before marking as unhealthy
+      start_period: 10s # Time to wait before starting health checks
+    restart: always
+
+  # PostgreSQL Database with pgvector extension
+  database:
+    image: pgvector/pgvector:pg15
+    container_name: db-${SERVICE}
+    network_mode: service:tailscale
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - ./pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    restart: always
+
+  # Khoj Application
+  application:
+    image: ${IMAGE_URL} # Image to be used
+    network_mode: service:tailscale # Sidecar configuration to route Khoj through Tailscale
+    container_name: app-${SERVICE} # Name for local container management
+    environment:
+      # Database Configuration
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=127.0.0.1
+      - POSTGRES_PORT=5432
+
+      # Khoj Configuration
+      - KHOJ_DJANGO_SECRET_KEY=${KHOJ_DJANGO_SECRET_KEY}
+      - KHOJ_DEBUG=False
+      - KHOJ_ADMIN_EMAIL=${KHOJ_ADMIN_EMAIL}
+      - KHOJ_ADMIN_PASSWORD=${KHOJ_ADMIN_PASSWORD}
+      - KHOJ_DOMAIN=${KHOJ_DOMAIN}
+      - KHOJ_NO_HTTPS=${KHOJ_NO_HTTPS}
+      - KHOJ_ALLOWED_DOMAIN=${KHOJ_ALLOWED_DOMAIN}
+
+      # AI Model API Keys (Optional - uncomment to use)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # - GEMINI_API_KEY=${GEMINI_API_KEY}
+
+      # Local Ollama Configuration (uncomment to use instead of commercial APIs)
+      # - OPENAI_BASE_URL=http://ollama:11434/v1
+
+      # Optional Features (uncomment to enable)
+      # - KHOJ_OPERATOR_ENABLED=True
+      # - KHOJ_TELEMETRY_DISABLE=True
+
+      # Authentication Configuration
+      # Set to True for anonymous mode (no authentication), False to enable email auth
+      - KHOJ_ANONYMOUS_MODE=${KHOJ_ANONYMOUS_MODE}
+
+      # Timezone
+      - TZ=${TZ}
+    volumes:
+      - ./${SERVICE}-data:/root/.khoj
+    depends_on:
+      tailscale:
+        condition: service_healthy
+      database:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:42110"] # Check if Khoj is running
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: always
+    command: --host="0.0.0.0" --port=42110 -vv --non-interactive ${KHOJ_EXTRA_ARGS}
