@@ -92,7 +92,7 @@ services:
       - KHOJ_ALLOWED_DOMAIN=${KHOJ_ALLOWED_DOMAIN}
 
       # AI Model API Keys (Optional - uncomment to use)
-      # - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       # - GEMINI_API_KEY=${GEMINI_API_KEY}
 
